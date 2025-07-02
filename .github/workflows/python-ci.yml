@@ -147,4 +147,4 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             pkill -f python_web_hello_world_Linux_x86_64 || true
-            nohup bash -c 'while true; do /usr/local/bin/python_web_hello_world_Linux_x86_64; sleep 3; done' >/dev/null 2>&1 &
+            nohup bash -c 'while true; do /usr/local/bin/dist/python_web_hello_world_Linux_x86_64; sleep 3; done' >/dev/null 2>&1 &
