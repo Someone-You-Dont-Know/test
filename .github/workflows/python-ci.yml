@@ -1,0 +1,152 @@
+name: Python CI & Build
+
+permissions:
+  contents: write
+
+on:
+  push:
+    paths:
+      - "*.py"
+      - ".github/workflows/python*"
+  release:
+    types: [published]
+
+jobs:
+  setup-python:
+    name: Setup Python workspace
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Create venv & install dependencies
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          pip install -r requirements.txt
+
+      - name: Upload workspace as artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-workspace
+          path: ./
+
+  lint-python:
+    name: Lint Python code
+    needs: setup-python
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download workspace
+        uses: actions/download-artifact@v4
+        with:
+          name: python-workspace
+
+      - name: Restore the same Python version
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Restore venv script permissions
+        run: chmod -R +x venv/bin
+
+      - name: Run pylint
+        run: venv/bin/pylint *.py
+
+  test-python:
+    name: Run tests
+    needs: setup-python
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download workspace
+        uses: actions/download-artifact@v4
+        with:
+          name: python-workspace
+
+      - name: Restore the same Python version
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Restore venv script permissions
+        run: chmod -R +x venv/bin
+
+      - name: Run pytest
+        run: venv/bin/pytest test.py
+
+  build:
+    name: Build release binaries
+    needs: test-python
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Download workspace
+        uses: actions/download-artifact@v4
+        with:
+          name: python-workspace
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Restore venv script permissions
+        run: chmod -R +x venv/bin
+
+      - name: Build arm64 executable
+        shell: bash
+        run: |
+          venv/bin/pyinstaller --onefile \
+                      --distpath dist \
+                      --target-architecture arm64 \
+                      --name python_web_hello_world_${{ runner.os }}_arm64 \
+                      --hidden-import fastapi \
+                      --hidden-import uvicorn \
+                      main.py
+
+      - name: Build amd64 executable
+        shell: bash
+        run: |
+          venv/bin/pyinstaller --onefile \
+                      --distpath dist \
+                      --target-architecture x86_64 \
+                      --name python_web_hello_world_${{ runner.os }}_x86_64 \
+                      --hidden-import fastapi \
+                      --hidden-import uvicorn \
+                      main.py
+
+      - name: Upload binary to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/python_web_hello_world_${{ runner.os }}*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: appleboy/scp-action@v0.1.7
+        if: runner.os == 'Linux'
+        with:
+          host: 209.38.249.200
+          username: ${{ vars.SERVER_USER_NAME }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: dist/python_web_hello_world_Linux_x86_64
+          target: /usr/local/bin/
+
+      - uses: appleboy/ssh-action@v0.1.7
+        if: runner.os == 'Linux'
+        with:
+          host: 209.38.249.200
+          username: ${{ vars.SERVER_USER_NAME }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            pkill -f python_web_hello_world_Linux_x86_64 || true
+            nohup bash -c 'while true; do /usr/local/bin/python_web_hello_world_Linux_x86_64; sleep 3; done' >/dev/null 2>&1 &
